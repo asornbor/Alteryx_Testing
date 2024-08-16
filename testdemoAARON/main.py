@@ -26,11 +26,6 @@ from presidio_anonymizer import AnonymizerEngine
 from spellchecker import SpellChecker
 from textblob import TextBlob
 
-#class AnswerOnlyOutputParser(StrOutputParser):
-#    def parse(self, response):
-        # Extract the answer from the response
- #       return response.split("Answer:")[1].strip() if "Answer:" in response else response.strip()
-
 class AnswerOnlyOutputParser(StrOutputParser):
     def parse(self, response):
         if "you do not have access" in response.lower():
@@ -44,10 +39,10 @@ class ChatBot():
         self.llm_type = llm_type
         self.api_key = api_key
         self.setup_language_model()
-        #self.memory = ConversationBufferMemory(memory_key="chat_history")  # Initialize buffer memory
         # Use the passed memory or create a new one
         self.memory = memory if memory else ConversationBufferMemory(memory_key="chat_history")
         self.setup_langchain()
+        self.setup_context_identification_template()
         self.setup_reranker()
         #self.initialize_knowledge_graph()
         # Uncomment this line if `initialize_tools` is necessary
@@ -60,8 +55,11 @@ class ChatBot():
         # Get the context from the collection
         for document in documents["documents"]:
             context = document
+        access_levels = []
+        for document in range(len(documents['metadatas'][0])):
+            access_levels.append(documents['metadatas'][0][document]['access_role'])
         # Rerank the documents
-        reranked_documents = self.reranker.rank(question, context)
+        reranked_documents = self.reranker.rank(question, context, access_levels)
         return reranked_documents    
         
     def initialize_chromadb(self):
@@ -147,15 +145,28 @@ class ChatBot():
 
     #     return context
             
-
-    def get_context_from_collection(self, input, access_levels):
+    def get_context_from_collection(self, input):
         # Extract context from the collection
-        if len(access_levels) == 1:
-            documents = self.collection.query(query_texts=[input],
-                                          n_results=10,
+        documents = self.collection.query(query_texts=[input],
+                                        n_results=10
+                                        )
+        reranked_documents = self.rerank_documents(input, documents)
+        # Use top 3 reranked documents
+        context = ([doc.text for doc in reranked_documents.top_k(3)])
+        document_roles = ([doc.doc_id for doc in reranked_documents.top_k(3)])
+        # Store the conversation in memory
+        self.memory.save_context({"input": input}, {"output": context})
+        # context = reranked_documents.top_k(3)[0].text # This code is to pick the best document from the top 3
+        return context, document_roles
+            
+    #def get_context_from_collection(self, input, access_levels):
+        # Extract context from the collection
+        #if len(access_levels) == 1:
+            #documents = self.collection.query(query_texts=[input],
+                                          #n_results=10,
                                           #where={"access_role": "General Access"}
-                                          where=access_levels[0]
-                                          )
+                                          #where=access_levels[0]
+                                          #)
         # if access_role == "General":
        #      documents = self.collection.query(query_texts=[input],
        #                                   n_results=5,
@@ -167,18 +178,18 @@ class ChatBot():
        #                                   n_results=10,
        #                                   where={"$or": access_text}
        #                                   )
-        else:
-            documents = self.collection.query(query_texts=[input],
-                                              n_results=10,
-                                              where={"$or": access_levels}
-                                              )
-        reranked_documents = self.rerank_documents(input, documents)
+        #else:
+            #documents = self.collection.query(query_texts=[input],
+                                              #n_results=10,
+                                              #where={"$or": access_levels}
+                                              #)
+        #reranked_documents = self.rerank_documents(input, documents)
         # Use top 3 reranked documents
-        context = " ".join([doc.text for doc in reranked_documents.top_k(3)])  # This code is append the top 3 docs together
+        #context = " ".join([doc.text for doc in reranked_documents.top_k(3)])  # This code is append the top 3 docs together
         # Store the conversation in memory
-        self.memory.save_context({"input": input}, {"output": context})
+        #self.memory.save_context({"input": input}, {"output": context})
         # context = reranked_documents.top_k(3)[0].text # This code is to pick the best document from the top 3
-        return context
+        #return context
 
     #def get_context_from_knowledge_graph(self, input):
         # query for everything
@@ -212,29 +223,121 @@ class ChatBot():
         # Concatenate context and question
         combined_text = f"{context} {question}"
         return combined_text
-
-    def setup_langchain(self):
+            
+    def setup_context_identification_template(self):
         template = """
-        You are an informational chatbot. These employees will ask you questions about company data and meeting information. Use the following piece of context to answer the question.
-        If you don't know the answer, simply state "You do not have the required level of access".
-        # You answer with short and concise answers, no longer than 2 sentences.
+        You are an informational chatbot. Employees will ask you questions about company data and meeting information.
+        Your task is to determine where the relevant information to answer the question is found.
 
-        Context: {context}
+        - If the relevant information is found in the Filtered Contexts, respond with 'Filtered Context'.
+        - If the relevant information is found in the Restricted Contexts, respond with 'Restricted Context'.
+        - If no relevant information is found in either, respond with 'No Relevant Context Found'.
+
+        Filtered Contexts: {filtered_contexts}
+
+        Restricted Contexts: {restricted_contexts}
+
         Question: {question}
+
         Answer:
         """
 
-        self.prompt = PromptTemplate(template=template, input_variables=["context", "question"])
+        self.context_identification_prompt = PromptTemplate(
+            template=template, 
+            input_variables=["filtered_contexts", "restricted_contexts", "question"]
+        )
+        
+        self.context_identification_chain = (
+            {"filtered_contexts": RunnablePassthrough(), "restricted_contexts": RunnablePassthrough(), "question": RunnablePassthrough()}
+            | self.context_identification_prompt
+            | self.llm
+            | AnswerOnlyOutputParser()
+        )
+            
+    def setup_langchain(self):
+        template = """
+        You are an informational chatbot. Employees will ask you questions about company data and meeting information.
+        Use the following instructions to provide the appropriate response:
+
+        - You should prioritize the information provided in the Filtered Contexts to answer the question.
+        - If relevant information is found in the Restricted Contexts, do not use it in your answer. Instead, respond with 'You do not have the required level of access.'
+        - If you cannot find the information needed in the Filtered Contexts and no relevant information is in the Restricted Contexts, respond with 'I do not have the required information to answer the question.'
+
+        Filtered Contexts: {filtered_contexts}
+
+        Restricted Contexts: {restricted_contexts}
+
+        Question: {question}
+
+        Answer:
+        """
+
+        # Create a PromptTemplate
+        self.prompt = PromptTemplate(template=template, input_variables=["filtered_contexts", "restricted_contexts", "question"])
         self.rag_chain = (
-            {"context": RunnablePassthrough(), "question": RunnablePassthrough()}  # Using passthroughs for context and question
+            {"filtered_contexts": RunnablePassthrough(), "restricted_contexts": RunnablePassthrough(), "question": RunnablePassthrough()}  # Using passthroughs for context and question
             | self.prompt
             | self.llm
             | AnswerOnlyOutputParser()
         )
+            
+    #def setup_langchain(self):
+        #template = """
+        #You are an informational chatbot. These employees will ask you questions about company data and meeting information. Use the following piece of context to answer the question.
+        #If you don't know the answer, simply state "You do not have the required level of access".
+        # You answer with short and concise answers, no longer than 2 sentences.
 
-    def ask(self, input_dict):
-        context = self.get_context_from_collection(input_dict["question"], input_dict.get("access_levels", []))
-        input_dict["context"] = context
+        #Context: {context}
+        #Question: {question}
+        #Answer:
+        #"""
+
+        #self.prompt = PromptTemplate(template=template, input_variables=["context", "question"])
+        #self.rag_chain = (
+        #    {"context": RunnablePassthrough(), "question": RunnablePassthrough()}  # Using passthroughs for context and question
+        #    | self.prompt
+        #    | self.llm
+        #    | AnswerOnlyOutputParser()
+        #)
+
+    def filter_context(self, document_roles, user_role, context):
+        filtered_contexts = []
+        restricted_contexts = []
+        for i in range(len(document_roles)):
+            if document_roles[i] in user_role:
+                filtered_contexts.append(context[i])
+            else:
+                restricted_contexts.append(context[i])
+        return filtered_contexts, restricted_contexts
+
+    def ask(self, question, access_levels):
+        # Get context and document roles from the collection
+        context, document_roles = self.get_context_from_collection(question)
+        filtered_contexts, restricted_contexts = self.filter_context(document_roles, access_levels, context)
+        # join the context together
+        restricted_contexts = " ".join(restricted_contexts)
+        filtered_contexts = " ".join(filtered_contexts)
+        
+        context_source = self.context_identification_chain.invoke({"filtered_contexts": filtered_contexts, "restricted_contexts": restricted_contexts, "question": question})
+
+        # Step 2: Based on the source, generate the response
+        if "filtered context" in context_source.lower():
+            # Proceed with the current setup using filtered context
+            response = self.rag_chain.invoke({"filtered_contexts": filtered_contexts, "restricted_contexts": "", "question": question})
+        elif "restricted context" in context_source.lower():
+            # Proceed with the current setup using restricted context
+            response = "You do not have the required level of access."
+        else:
+            response = "I do not have the required information to answer the question."
+
+        # Save the conversation to memory
+        self.memory.save_context({"input": question}, {"output": response})
+        
+        return response
+
+    #def ask(self, input_dict):
+        #context = self.get_context_from_collection(input_dict["question"], input_dict.get("access_levels", []))
+        #input_dict["context"] = context
 
         # Load the previous chat history from memory
         # Load and append chat history to the context
@@ -242,28 +345,17 @@ class ChatBot():
         #if chat_history and chat_history.messages:
             #historical_context = " ".join([msg.content for msg in chat_history.messages])
             #context = f"{historical_context} {context}"  # Append historical context to current context
-        chat_history = self.memory.chat_memory
-        if chat_history and chat_history.messages:
-            input_dict["context"] += " " + " ".join([msg.content for msg in chat_history.messages])
+        #chat_history = self.memory.chat_memory
+        #if chat_history and chat_history.messages:
+            #input_dict["context"] += " " + " ".join([msg.content for msg in chat_history.messages])
 
         # Preprocess the input
         #processed_input = self.preprocess_input(input_dict)
 
         # Run the RAG chain
-        response = self.rag_chain.invoke(input_dict)
+        #response = self.rag_chain.invoke(input_dict)
         
         # Save the conversation to memory
-        self.memory.save_context({"input": input_dict["question"]}, {"output": response})
+        #self.memory.save_context({"input": input_dict["question"]}, {"output": response})
 
-        return response
-    #def get_combined_context(self, input, access_levels):
-        #collection_context = self.get_context_from_collection(input, access_levels)
-        #graph_context = self.get_context_from_knowledge_graph(input)
-        #combined_context = f"{collection_context} {graph_context}"
-        #return combined_context
-
-    #def answer_question(self, input_dict, access_levels):
-        ## input_text = self.preprocess_input(input_dict)
-        #combined_context = self.get_combined_context(input_dict, access_levels)
-        #response = self.rag_chain.run({"context": combined_context, "question": input_dict.get("question", "")})
         #return response
