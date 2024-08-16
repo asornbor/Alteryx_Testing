@@ -304,10 +304,13 @@ class ChatBot():
         filtered_contexts = []
         restricted_contexts = []
         for i in range(len(document_roles)):
+            print(f"Document Role: {document_roles[i]}, User Role: {user_role}")
             if document_roles[i] in user_role:
                 filtered_contexts.append(context[i])
             else:
                 restricted_contexts.append(context[i])
+            print(f"Filtered Contexts: {filtered_contexts}")
+            print(f"Restricted Contexts: {restricted_contexts}")
         return filtered_contexts, restricted_contexts
 
     def ask(self, question, access_levels):
