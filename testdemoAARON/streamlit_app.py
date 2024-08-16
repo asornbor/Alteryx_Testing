@@ -184,7 +184,7 @@ def run_app(access_levels):
             input_dict = {"question": input, "access_levels": access_levels}
             
             # Retrieve context from the database
-            try:
+            #try:
                 #context = bot.get_combined_context(input, access_levels=access_levels)
                 #context = bot.get_context_from_collection(input, access_levels=access_levels)
                 #input_dict["context"] = context
@@ -193,9 +193,9 @@ def run_app(access_levels):
                     #input_dict["context"] += " " + " ".join([msg.content for msg in chat_history.messages])
                 #context = "Default context for access level: " + access_level  # Placeholder for actual context retrieval
                 #st.session_state.context_history.append(context)  # Store the context for potential future references
-            except Exception as e:
-                st.error(f"Error retrieving context: {e}")
-                context = "An error occurred while retrieving context."
+            #except Exception as e:
+                #st.error(f"Error retrieving context: {e}")
+                #context = "An error occurred while retrieving context."
 
             # Generate a new response
             #input_dict = {"context": context, "question": input}
