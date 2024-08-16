@@ -110,7 +110,8 @@ def main():
             #st.session_state.username = ""
             #st.session_state.password = ""
     else:
-        run_app(st.session_state.access_levels)
+        #run_app(st.session_state.access_levels)
+        run_app(st.session_state.access_roles_str)
 
 def run_app(access_levels):
     # Sidebar elements
