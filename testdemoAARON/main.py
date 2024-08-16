@@ -322,7 +322,7 @@ class ChatBot():
         filtered_contexts = " ".join(filtered_contexts)
         
         context_source = self.context_identification_chain.invoke({"filtered_contexts": filtered_contexts, "restricted_contexts": restricted_contexts, "question": question})
-
+        print(context_source)
         # Step 2: Based on the source, generate the response
         if "filtered context" in context_source.lower():
             # Proceed with the current setup using filtered context
