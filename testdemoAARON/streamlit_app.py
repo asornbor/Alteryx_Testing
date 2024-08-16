@@ -158,7 +158,8 @@ def run_app(access_levels):
         def generate_response(input_dict):
             try:
                 #nice_input = bot.preprocess_input(input_dict)
-                result = bot.rag_chain.invoke(input_dict)
+                #result = bot.rag_chain.invoke(input_dict)
+                result = bot.ask(input_dict["question"], input_dict["access_levels"])
                 st.session_state.memory.save_context({"input": input_dict["question"]}, {"output": result})
                 ##result = bot.answer_question(input_dict, access_levels)
                 # Prepare the input dictionary
@@ -185,13 +186,13 @@ def run_app(access_levels):
             # Retrieve context from the database
             try:
                 #context = bot.get_combined_context(input, access_levels=access_levels)
-                context = bot.get_context_from_collection(input, access_levels=access_levels)
-                input_dict["context"] = context
-                chat_history = st.session_state.memory.chat_memory
-                if chat_history and chat_history.messages:
-                    input_dict["context"] += " " + " ".join([msg.content for msg in chat_history.messages])
+                #context = bot.get_context_from_collection(input, access_levels=access_levels)
+                #input_dict["context"] = context
+                #chat_history = st.session_state.memory.chat_memory
+                #if chat_history and chat_history.messages:
+                    #input_dict["context"] += " " + " ".join([msg.content for msg in chat_history.messages])
                 #context = "Default context for access level: " + access_level  # Placeholder for actual context retrieval
-                st.session_state.context_history.append(context)  # Store the context for potential future references
+                #st.session_state.context_history.append(context)  # Store the context for potential future references
             except Exception as e:
                 st.error(f"Error retrieving context: {e}")
                 context = "An error occurred while retrieving context."
