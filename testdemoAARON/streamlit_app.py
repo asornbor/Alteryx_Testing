@@ -99,8 +99,10 @@ def main():
                 st.session_state.memory = ConversationBufferMemory(memory_key="chat_history")  # Initialize memory here
                 access_roles = [access['access_role'] for access in access_levels]
                 access_roles_str = ', '.join(access_roles)
+                st.session_state.access_roles_str = access_roles_str
                 st.success(f"Welcome {username}! Your role is {role} with {access_roles_str}.")
-                run_app(st.session_state.access_levels)
+                #run_app(st.session_state.access_levels)
+                run_app(st.session_state.access_roles_str)
                 st.rerun()
                 #run_app(access_levels)
             else:
